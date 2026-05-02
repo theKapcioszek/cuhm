@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <openssl/ssl.h>
 
-#define BUF_LEN 2
+#define BUF_LEN 8193
 #define RESP_HEAD_LEN 1024
 #define MAX_PATH_LEN 100
 #define MAX_HOST_LEN 100
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
   char header[RESP_HEAD_LEN]; memset(&header, 0, sizeof(header));
   strcpy(message,"GET /");strcat(message,path);strcat(message," HTTP/1.1\r\nHost: ");strcat(message,hostname);strcat(message,"\r\nConnection: close\r\n\r\n");
   SSL_write(ssl,message,strlen(message));
-  while(SSL_read(ssl,buffer,BUF_LEN-1) != 0){
+  while(SSL_read(ssl,buffer,1) != 0){
     strcat(header,buffer);
     if (strstr(header,"\r\n\r\n") != NULL) break;
   }
@@ -128,15 +128,33 @@ int main(int argc, char **argv)
   }
 
   printf("%s",header);
+  char *chopped_header = strstr(header,"Content-Length: ");
+
+  StringView sv_chopped_header = {0};
+  sv_chopped_header.data = chopped_header;
+  sv_chopped_header.count = strlen(chopped_header);
+
+  sv_chop_by_delim(&sv_chopped_header,' ');
+  StringView sv_cs_content_length = sv_chop_by_delim(&sv_chopped_header, '\n');
+  char cs_content_length[100];
+  sv_to_cstring(cs_content_length,&sv_cs_content_length);
 
   FILE *fp = fopen(argv[2], "wb");
 
   size_t read_bytes = 0;
-  while(read_bytes = SSL_read(ssl,buffer,BUF_LEN-1) != 0){
+  size_t bytes_recieved = 0;
+  size_t bytes_to_recieve = atoi(cs_content_length);
+
+  while(1){
+    read_bytes = SSL_read(ssl,buffer,BUF_LEN-1);
+    bytes_recieved += read_bytes;
     fwrite(buffer,1,read_bytes,fp);
+    if(bytes_recieved >= bytes_to_recieve) break;
   }
   fclose(fp);
-  
+
+  printf("\n\ntarget: %ld  recieved:%ld\n\n",bytes_to_recieve,bytes_recieved);
+
   cleanup_stuff(ssl,ctx,le_socket);
 
   return 0;
