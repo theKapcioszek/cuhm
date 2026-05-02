@@ -5,23 +5,86 @@
 #include <openssl/ssl.h>
 
 #define BUF_LEN 2
-#define RESP_LEN 4096
+#define RESP_HEAD_LEN 1024
+#define MAX_PATH_LEN 100
+#define MAX_HOST_LEN 100
 
 typedef struct {
     char *data;
     size_t count;
 }StringView;
 
+void sv_chop_left(StringView *sv, size_t n){
+  
+  if(n > sv->count) n = sv->count;
+  sv->count -= n;
+  sv->data += n;
+
+  return;
+}
+
+void sv_chop_right(StringView *sv, size_t n){
+  
+  if(n > sv->count) n = sv->count;
+  sv->count -= n;
+
+  return;
+}
+
+
+StringView sv_chop_by_delim(StringView *sv, char delim){
+
+  if(strchr(sv->data,delim) == NULL) return *sv;
+  size_t i = 0;
+  while (i < sv->count && sv->data[i] != delim){
+    i += 1;
+  }
+  if(i < sv->count){
+    StringView result = {0};
+    result.data = sv->data;
+    result.count = i;
+    
+    sv_chop_left(sv, i+1);
+    return result;
+  }
+}
+
+char *sv_to_cstring(char *cstring,StringView *sv){
+  char *result = cstring;
+  for(int i = 0; i < sv->count; i++){
+    cstring[i] = sv->data[i];
+  }
+  return result;
+}
+
+void cleanup_stuff(SSL *ssl, SSL_CTX *ctx,int sockfd){
+
+  SSL_shutdown(ssl);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
+  shutdown(sockfd,1);
+
+  return;
+}
+
 int main(int argc, char **argv)
 {
 
-  if(argc < 2){
-    printf("\n\nUsage: %s <domain name>\n\n",argv[0]);
+  if(argc < 3){
+    printf("\n\nUsage: %s <URL> <output file>\n\n",argv[0]);
     return 1;
   }
   
-  char hostname[100]; memset(&hostname, 0, sizeof(hostname));
-  strcpy(hostname,argv[1]);
+  char hostname[MAX_HOST_LEN]; memset(&hostname, 0, sizeof(hostname));
+  char path[MAX_PATH_LEN]; memset(&path, 0, sizeof(path));
+
+  StringView le_URL = {0};
+  le_URL.data = argv[1];
+  le_URL.count = strlen(argv[1]);
+
+  StringView sv_hostname = sv_chop_by_delim(&le_URL, '/');
+  sv_to_cstring(hostname,&sv_hostname);
+  sv_to_cstring(path,&le_URL);
 
   SSL_library_init();
   SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
@@ -48,23 +111,33 @@ int main(int argc, char **argv)
   SSL_connect(ssl);
 
   char buffer[BUF_LEN]; memset(&buffer, 0, sizeof(buffer));
-  char message[1024]; memset(&message, 0 ,sizeof(message)); 
-  char response[RESP_LEN]; memset(&response, 0, sizeof(response));
-  strcpy(message,"GET / HTTP/1.1\r\nHost: ");strcat(message,hostname);strcat(message,"\r\nConnection: close\r\n\r\n");
+  char message[1024]; memset(&message, 0 ,sizeof(message));
+  char header[RESP_HEAD_LEN]; memset(&header, 0, sizeof(header));
+  strcpy(message,"GET /");strcat(message,path);strcat(message," HTTP/1.1\r\nHost: ");strcat(message,hostname);strcat(message,"\r\nConnection: close\r\n\r\n");
   SSL_write(ssl,message,strlen(message));
   while(SSL_read(ssl,buffer,BUF_LEN-1) != 0){
-    strcat(response,buffer);
+    strcat(header,buffer);
+    if (strstr(header,"\r\n\r\n") != NULL) break;
   }
-  StringView response_sv = {0};
-  response_sv.data = response;
-  response_sv.count = strlen(response);
+ 
+  if (strstr(header,"200 OK") == NULL){
+    int i = -1;
+    while(header[i] != '\n') printf("%c",header[++i]); //i++ didnt work (on my machine at least)
+    cleanup_stuff(ssl,ctx,le_socket);
+    return 2;
+  }
 
-  printf("%s",response_sv.data);
+  printf("%s",header);
+
+  FILE *fp = fopen(argv[2], "wb");
+
+  size_t read_bytes = 0;
+  while(read_bytes = SSL_read(ssl,buffer,BUF_LEN-1) != 0){
+    fwrite(buffer,1,read_bytes,fp);
+  }
+  fclose(fp);
   
-  SSL_shutdown(ssl);
-  SSL_free(ssl);
-  SSL_CTX_free(ctx);
-  shutdown(le_socket,1);
+  cleanup_stuff(ssl,ctx,le_socket);
 
   return 0;
 }
