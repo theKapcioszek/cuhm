@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <openssl/ssl.h>
 
-#define BUF_LEN 8193
+#define BUF_LEN 1048577 //1MB + 1B buffer
 #define RESP_HEAD_LEN 1024
 #define MAX_PATH_LEN 100
 #define MAX_HOST_LEN 100
@@ -146,6 +146,8 @@ int main(int argc, char **argv)
   size_t bytes_to_recieve = atoi(cs_content_length);
 
   while(1){
+    printf("\e[2k\r%.2lf%c",((double)bytes_recieved/bytes_to_recieve)*100,'%');
+    fflush(stdout);
     read_bytes = SSL_read(ssl,buffer,BUF_LEN-1);
     bytes_recieved += read_bytes;
     fwrite(buffer,1,read_bytes,fp);
