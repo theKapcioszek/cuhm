@@ -1,1 +1,4 @@
-Can You Hear Me. Small single header library that sends an HTTP request to a server and recieves a file. 
+WIP
+
+Can You Hear Me. Small program for receiving files over HTTP/HTTPS.
+Includes a single header library that helps with connecting and retrieving data over SSL (or without it)

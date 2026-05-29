@@ -4,10 +4,10 @@
 #include <netdb.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <openssl/ssl.h>
 
 #define RESPONSE_NOT_OK 2
-#define VERBAL 300
 
 #define BUF_LEN 1048577 //1MB + 1B buffer
 #define RESP_HEAD_LEN 1024
@@ -25,13 +25,21 @@ typedef struct {
 
 } SslCtxSock;
 
+typedef struct {
+  int code;
+  int content_length;
+  StringView header;
+
+} HeaderData;
+
 void sv_chop_left(StringView *sv, size_t n);
 void sv_chop_right(StringView *sv, size_t n);
 StringView sv_chop_by_delim(StringView *sv, char delim);
-char *sv_to_cstring(char *cstring,StringView *sv);
+void sv_to_cstring(char *cstring,StringView *sv);
 
 SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port);
-int CUHM_RetrieveFileSSL(char* hostname, char* path, SSL* ssl, FILE* fp, int verbal_flag);
+HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp);
+int CUHM_RetrieveFile(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp, float *progress);
 void CUHM_Cleanup(SSL *ssl, SSL_CTX *ctx,int sockfd);
 
 #if defined(CUHM_IMPLEMENTATION)
@@ -71,12 +79,11 @@ StringView sv_chop_by_delim(StringView *sv, char delim){
   }
 }
 
-char *sv_to_cstring(char *cstring,StringView *sv){
-  char *result = cstring;
+void sv_to_cstring(char *cstring,StringView *sv){
   for(int i = 0; i < sv->count; i++){
     cstring[i] = sv->data[i];
   }
-  return result;
+  return;
 }
 
 SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
@@ -115,44 +122,97 @@ SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
 
 }
 
-int CUHM_RetrieveFileSSL(char* hostname, char* path, SSL* ssl, FILE* fp, int verbal_flag){
+SslCtxSock CUHM_ConnectToService(char* hostname, char* port){
+  
+  struct addrinfo hints, *result;
+  int le_socket = 0;
 
-  char buffer[BUF_LEN]; memset(&buffer, 0, sizeof(buffer));
+  memset(&hints, 0, sizeof(hints));
+
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE;
+
+  getaddrinfo(hostname,port,&hints,&result);
+
+  le_socket = socket(result->ai_family,result->ai_socktype,result->ai_protocol);
+  connect(le_socket,result->ai_addr,result->ai_addrlen);
+
+  freeaddrinfo(result);
+  SslCtxSock struct_to_return = {0};
+
+  struct_to_return.ssl = NULL;
+  struct_to_return.ctx = NULL;
+  struct_to_return.sockfd = le_socket;
+
+  return struct_to_return;
+}
+
+HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp){
+
+  char buffer[1024]; memset(&buffer, 0, sizeof(buffer));
   char message[1024]; memset(&message, 0 ,sizeof(message));
-  char header[RESP_HEAD_LEN]; memset(&header, 0, sizeof(header));
+  char recieved_header[RESP_HEAD_LEN]; memset(&recieved_header, 0, sizeof(recieved_header));
   strcpy(message,"GET /");strcat(message,path);strcat(message," HTTP/1.1\r\nHost: ");strcat(message,hostname);strcat(message,"\r\nConnection: close\r\n\r\n");
-  SSL_write(ssl,message,strlen(message));
-  while(SSL_read(ssl,buffer,1) != 0){
-    strcat(header,buffer);
-    if (strstr(header,"\r\n\r\n") != NULL) break;
+  if (le_sockets->ssl != NULL){
+    SSL_write(le_sockets->ssl,message,strlen(message));
+    while(SSL_read(le_sockets->ssl,buffer,1) != 0){
+      strcat(recieved_header,buffer);
+      if (strstr(recieved_header,"\r\n\r\n") != NULL) break;
+    }
   }
- 
-  if (strstr(header,"200 OK") == NULL){
-    int i = -1;
-    if(verbal_flag == VERBAL) while(header[i] != '\n') printf("%c",header[++i]); //i++ didnt work (on my machine at least)
-
-    return RESPONSE_NOT_OK;
+  else{
+    write(le_sockets->sockfd,message,strlen(message));
+    while(read(le_sockets->sockfd,buffer,1) != 0){
+      strcat(recieved_header,buffer);
+      if (strstr(recieved_header,"\r\n\r\n") != NULL) break;
+    }
   }
 
-  if(verbal_flag == VERBAL)printf("%s",header);
-  char *chopped_header = strstr(header,"Content-Length: ");
+  HeaderData result = {0};
+  result.header.data = recieved_header;
+  result.header.count = strlen(recieved_header);
+
+  int chop_amount = strlen("HTTP/1.1 ");
+  sv_chop_left(&result.header,chop_amount);
+  result.header.count = 3;
+  char cs_code[4]; sv_to_cstring(cs_code,&result.header);
+  result.code = atoi(cs_code);
+
+  result.header.data -= chop_amount;
+  result.header.count = strlen(recieved_header);
+
+  char *cs_chopped_header = strstr(result.header.data,"Content-Length: ");
 
   StringView sv_chopped_header = {0};
-  sv_chopped_header.data = chopped_header;
-  sv_chopped_header.count = strlen(chopped_header);
+  sv_chopped_header.data = cs_chopped_header;
+  sv_chopped_header.count = strlen(cs_chopped_header);
 
   sv_chop_by_delim(&sv_chopped_header,' ');
-  StringView sv_cs_content_length = sv_chop_by_delim(&sv_chopped_header, '\n');
+  StringView sv_content_length = sv_chop_by_delim(&sv_chopped_header, '\n');
   char cs_content_length[100];
-  sv_to_cstring(cs_content_length,&sv_cs_content_length);
+  sv_to_cstring(cs_content_length,&sv_content_length);
 
+  result.content_length = atoi(cs_content_length);
+
+  return result;
+
+}
+
+int CUHM_RetrieveFile(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp, float *progress){
+
+  HeaderData header_data = CUHM_RetrieveHeaderHTTP(hostname, path, le_sockets, fp);
+
+  if (header_data.code != 200) return RESPONSE_NOT_OK;
+
+  char buffer[BUF_LEN]; memset(&buffer, 0, sizeof(buffer));
   size_t read_bytes = 0;
   size_t bytes_recieved = 0;
-  size_t bytes_to_recieve = atoi(cs_content_length);
+  size_t bytes_to_recieve = header_data.content_length;
 
   while(1){
-    if(verbal_flag == VERBAL){ printf("\e[2k\r%.2lf%c",((double)bytes_recieved/bytes_to_recieve)*100,'%'); fflush(stdout); }
-    read_bytes = SSL_read(ssl,buffer,BUF_LEN-1);
+    if(progress != NULL) *progress = ((double)bytes_recieved/bytes_to_recieve) * 100;
+    read_bytes = le_sockets->ssl != NULL ? SSL_read(le_sockets->ssl,buffer,BUF_LEN-1) : read(le_sockets->sockfd,buffer,BUF_LEN-1);
     bytes_recieved += read_bytes;
     fwrite(buffer,1,read_bytes,fp);
     if(bytes_recieved >= bytes_to_recieve) break;

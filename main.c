@@ -8,7 +8,7 @@ int main(int argc, char **argv)
 {
 
   if(argc < 3){
-    printf("\n\nUsage: %s <URL> <output file>\n\n",argv[0]);
+    printf("\n\nUsage: %s <URL> <output file path>\n\n",argv[0]);
     return 1;
   }
   
@@ -26,7 +26,10 @@ int main(int argc, char **argv)
   SslCtxSock le_sockets = CUHM_ConnectToServiceSSL(hostname,"443");
 
   FILE* fp = fopen(argv[2],"wb");
-  if(CUHM_RetrieveFileSSL(hostname,path,le_sockets.ssl,fp,VERBAL) != 0) { CUHM_Cleanup(le_sockets.ssl,le_sockets.ctx,le_sockets.sockfd); return RESPONSE_NOT_OK; };
+  float progress = 0;
+  if(CUHM_RetrieveFile(hostname,path,&le_sockets,fp,&progress) != 0) {
+    CUHM_Cleanup(le_sockets.ssl,le_sockets.ctx,le_sockets.sockfd); return RESPONSE_NOT_OK;
+  };
   fclose(fp);
 
   CUHM_Cleanup(le_sockets.ssl,le_sockets.ctx,le_sockets.sockfd);
