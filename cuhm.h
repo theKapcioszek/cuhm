@@ -7,8 +7,6 @@
 #include <unistd.h>
 #include <openssl/ssl.h>
 
-#define RESPONSE_NOT_OK 2
-
 #define BUF_LEN 1048577 //1MB + 1B buffer
 #define RESP_HEAD_LEN 1024
 
@@ -38,8 +36,8 @@ StringView sv_chop_by_delim(StringView *sv, char delim);
 void sv_to_cstring(char *cstring,StringView *sv);
 
 SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port);
-HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp);
-int CUHM_RetrieveFile(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp, float *progress);
+HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_sockets);
+int CUHM_RetrieveFile(char* hostname, char* path, SslCtxSock *le_sockets, HeaderData *header_data, FILE* fp, float *progress);
 void CUHM_Cleanup(SSL *ssl, SSL_CTX *ctx,int sockfd);
 
 #if defined(CUHM_IMPLEMENTATION)
@@ -88,6 +86,8 @@ void sv_to_cstring(char *cstring,StringView *sv){
 
 SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
 
+  SslCtxSock struct_to_return = {0};
+
   SSL_library_init();
   SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
 
@@ -102,6 +102,8 @@ SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
 
   getaddrinfo(hostname,port,&hints,&result);
 
+  if (result == (void*)0x3) return struct_to_return;
+
   le_socket = socket(result->ai_family,result->ai_socktype,result->ai_protocol);
   connect(le_socket,result->ai_addr,result->ai_addrlen);
 
@@ -112,8 +114,6 @@ SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
   SSL_set_tlsext_host_name(ssl, hostname);
   SSL_connect(ssl);
 
-  SslCtxSock struct_to_return = {0};
-
   struct_to_return.ssl = ssl;
   struct_to_return.ctx = ctx;
   struct_to_return.sockfd = le_socket;
@@ -123,7 +123,9 @@ SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
 }
 
 SslCtxSock CUHM_ConnectToService(char* hostname, char* port){
-  
+
+  SslCtxSock struct_to_return = {0};
+
   struct addrinfo hints, *result;
   int le_socket = 0;
 
@@ -135,11 +137,12 @@ SslCtxSock CUHM_ConnectToService(char* hostname, char* port){
 
   getaddrinfo(hostname,port,&hints,&result);
 
+  if (result == (void*)0x3) return struct_to_return;
+
   le_socket = socket(result->ai_family,result->ai_socktype,result->ai_protocol);
   connect(le_socket,result->ai_addr,result->ai_addrlen);
 
   freeaddrinfo(result);
-  SslCtxSock struct_to_return = {0};
 
   struct_to_return.ssl = NULL;
   struct_to_return.ctx = NULL;
@@ -148,7 +151,7 @@ SslCtxSock CUHM_ConnectToService(char* hostname, char* port){
   return struct_to_return;
 }
 
-HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp){
+HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_sockets){
 
   char buffer[1024]; memset(&buffer, 0, sizeof(buffer));
   char message[1024]; memset(&message, 0 ,sizeof(message));
@@ -199,16 +202,12 @@ HeaderData CUHM_RetrieveHeaderHTTP(char* hostname, char* path, SslCtxSock *le_so
 
 }
 
-int CUHM_RetrieveFile(char* hostname, char* path, SslCtxSock *le_sockets, FILE* fp, float *progress){
-
-  HeaderData header_data = CUHM_RetrieveHeaderHTTP(hostname, path, le_sockets, fp);
-
-  if (header_data.code != 200) return RESPONSE_NOT_OK;
+int CUHM_RetrieveFile(char* hostname, char* path, SslCtxSock *le_sockets, HeaderData *header_data, FILE* fp, float *progress){
 
   char buffer[BUF_LEN]; memset(&buffer, 0, sizeof(buffer));
   size_t read_bytes = 0;
   size_t bytes_recieved = 0;
-  size_t bytes_to_recieve = header_data.content_length;
+  size_t bytes_to_recieve = header_data->content_length;
 
   while(1){
     if(progress != NULL) *progress = ((double)bytes_recieved/bytes_to_recieve) * 100;
