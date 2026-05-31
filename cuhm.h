@@ -100,9 +100,7 @@ SslCtxSock CUHM_ConnectToServiceSSL(char* hostname, char* port){
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
-  getaddrinfo(hostname,port,&hints,&result);
-
-  if (result == (void*)0x3) return struct_to_return;
+  if (getaddrinfo(hostname,port,&hints,&result) != 0 ) return struct_to_return;
 
   le_socket = socket(result->ai_family,result->ai_socktype,result->ai_protocol);
   connect(le_socket,result->ai_addr,result->ai_addrlen);
@@ -135,10 +133,8 @@ SslCtxSock CUHM_ConnectToService(char* hostname, char* port){
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
-  getaddrinfo(hostname,port,&hints,&result);
-
-  if (result == (void*)0x3) return struct_to_return;
-
+  if (getaddrinfo(hostname,port,&hints,&result) != 0 ) return struct_to_return;
+ 
   le_socket = socket(result->ai_family,result->ai_socktype,result->ai_protocol);
   connect(le_socket,result->ai_addr,result->ai_addrlen);
 
